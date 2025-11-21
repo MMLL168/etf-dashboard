@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ETF 存股複利戰情室</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { background-color: #f0f2f5; font-family: 'Segoe UI', sans-serif; }
+        .sidebar { background-color: #ffffff; min-height: 100vh; border-right: 1px solid #dee2e6; }
+        .nav-link { color: #495057; font-weight: 500; }
+        .nav-link.active { background-color: #e7f1ff; color: #0d6efd; border-radius: 5px; }
+        .card { border: none; box-shadow: 0 2px 10px rgba(0,0,0,0.05); border-radius: 10px; }
+        .chart-container { position: relative; height: 400px; width: 100%; }
+        .growth-badge { font-size: 0.9em; padding: 5px 10px; border-radius: 20px; background-color: #d1e7dd; color: #0f5132; }
+    </style>
+</head>
+<body>
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-3 col-lg-2 sidebar p-3 d-none d-md-block">
+            <h5 class="text-primary mb-4"><i class="bi bi-graph-up-arrow"></i> 存股戰情室</h5>
+            <div class="mb-3">
+                <label class="form-label small text-muted">選擇我的持股</label>
+                <select class="form-select" id="etfSelector" onchange="renderDashboard()">
+                    </select>
+            </div>
+            <div class="d-grid gap-2">
+                <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#editModal">
+                    <i class="bi bi-pencil-square"></i> 管理/新增 ETF
+                </button>
+                <button class="btn btn-outline-danger btn-sm" onclick="resetData()">
+                    <i class="bi bi-arrow-counterclockwise"></i> 重置所有資料
+                </button>
+            </div>
+            <hr>
+            <div class="small text-muted mt-3">
+                <i class="bi bi-info-circle"></i> 數據說明：<br>
+                此模型假設「股息再投入」，且股價填息順利。複利頻率以「年」為單位。
+            </div>
+        </div>
+
+        <div class="col-md-9 col-lg-10 p-4">
+            <div class="d-md-none mb-3">
+                <select class="form-select mb-2" id="etfSelectorMobile" onchange="syncMobileSelect(this.value)">
+                    </select>
+                <button class="btn btn-primary w-100" data-bs-toggle="modal" data-bs-target="#editModal">管理持股清單</button>
+            </div>
+
+            <h2 class="mb-4" id="dashboardTitle">載入中...</h2>
+
+            <div class="row g-3 mb-4">
+                <div class="col-md-4">
+                    <div class="card p-3 h-100 border-start border-5 border-primary">
+                        <div class="text-muted small">目前持有張數</div>
+                        <div class="h2 fw-bold mb-0" id="currentSharesDisplay">0</div>
+                        <div class="text-muted small mt-2">初始投入</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card p-3 h-100 border-start border-5 border-success">
+                        <div class="text-muted small">平均年化殖利率 (預估)</div>
+                        <div class="h2 fw-bold mb-0 text-success" id="yieldDisplay">0%</div>
+                        <div class="text-muted small mt-2">複利引擎核心</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card p-3 h-100 border-start border-5 border-warning">
+                        <div class="text-muted small">10 年後預估累積</div>
+                        <div class="h2 fw-bold mb-0 text-warning" id="futureSharesDisplay">0</div>
+                        <div class="text-muted small mt-2">總資產成長 <span id="growthRateDisplay"></span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card p-4 mb-4">
+                <h5 class="card-title">📊 複利成長視覺化 (10年推演)</h5>
+                <div class="chart-container">
+                    <canvas id="compoundChart"></canvas>
+                </div>
+            </div>
+
+            <div class="card p-4">
+                <h5 class="card-title">📅 年度成長預估表</h5>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>年度</th>
+                                <th>累積張數 (Shares)</th>
+                                <th>增加張數 (來自股息)</th>
+                                <th>成長倍率</th>
+                            </tr>
+                        </thead>
+                        <tbody id="projectionTable">
+                            </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="editModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">管理我的 ETF 投資組合</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info small">
+                    <i class="bi bi-lightbulb"></i> 在此輸入您的持股，系統會自動儲存。
+                </div>
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>代碼</th>
+                            <th>名稱</th>
+                            <th>目前張數</th>
+                            <th>預估殖利率(%)</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="portfolioTableBody">
+                        </tbody>
+                </table>
+                
+                <hr>
+                <h6>新增 ETF</h6>
+                <div class="row g-2">
+                    <div class="col-md-2">
+                        <input type="text" class="form-control" id="newCode" placeholder="代碼 (e.g 0050)">
+                    </div>
+                    <div class="col-md-3">
+                        <input type="text" class="form-control" id="newName" placeholder="名稱">
+                    </div>
+                    <div class="col-md-2">
+                        <input type="number" class="form-control" id="newShares" placeholder="張數" step="0.1">
+                    </div>
+                    <div class="col-md-2">
+                        <input type="number" class="form-control" id="newYield" placeholder="殖利率%" step="0.1">
+                    </div>
+                    <div class="col-md-3">
+                        <button class="btn btn-success w-100" onclick="addETF()">新增至清單</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 1. 預設資料 (若無 LocalStorage 紀錄時使用)
+    const defaultPortfolio = [
+        { id: '00878', name: '國泰永續高股息', shares: 10, yield: 6.5 },
+        { id: '0056',  name: '元大高股息',    shares: 5,  yield: 7.2 },
+        { id: '00919', name: '群益精選高息',  shares: 8,  yield: 8.5 },
+        { id: '00713', name: '元大高息低波',  shares: 3,  yield: 5.8 }
+    ];
+
+    let portfolio = [];
+    let chartInstance = null;
+
+    // 2. 初始化
+    window.onload = function() {
+        loadData();
+        updateSelectors();
+        renderEditTable();
+        renderDashboard();
+    };
+
+    // 3. 資料存取 (LocalStorage)
+    function loadData() {
+        const stored = localStorage.getItem('myETFPortfolio');
+        if (stored) {
+            portfolio = JSON.parse(stored);
+        } else {
+            portfolio = JSON.parse(JSON.stringify(defaultPortfolio)); // Deep copy
+        }
+    }
+
+    function saveData() {
+        localStorage.setItem('myETFPortfolio', JSON.stringify(portfolio));
+        updateSelectors();
+        renderEditTable();
+        renderDashboard();
+    }
+
+    function resetData() {
+        if(confirm("確定要重置回預設範例嗎？您的自定義資料將消失。")) {
+            localStorage.removeItem('myETFPortfolio');
+            loadData();
+            updateSelectors();
+            renderEditTable();
+            renderDashboard();
+        }
+    }
+
+    // 4. UI 更新邏輯
+    function updateSelectors() {
+        const sel = document.getElementById('etfSelector');
+        const selMobile = document.getElementById('etfSelectorMobile');
+        sel.innerHTML = '';
+        selMobile.innerHTML = '';
+
+        portfolio.forEach((etf, index) => {
+            const option = `<option value="${index}">${etf.id} ${etf.name}</option>`;
+            sel.innerHTML += option;
+            selMobile.innerHTML += option;
+        });
+    }
+
+    function syncMobileSelect(val) {
+        document.getElementById('etfSelector').value = val;
+        renderDashboard();
+    }
+
+    function renderEditTable() {
+        const tbody = document.getElementById('portfolioTableBody');
+        tbody.innerHTML = '';
+        
+        portfolio.forEach((etf, index) => {
+            tbody.innerHTML += `
+                <tr>
+                    <td>${etf.id}</td>
+                    <td>${etf.name}</td>
+                    <td><input type="number" class="form-control form-control-sm" style="width: 80px" value="${etf.shares}" onchange="updateItem(${index}, 'shares', this.value)"></td>
+                    <td><input type="number" class="form-control form-control-sm" style="width: 80px" value="${etf.yield}" onchange="updateItem(${index}, 'yield', this.value)"></td>
+                    <td><button class="btn btn-sm btn-outline-danger" onclick="deleteItem(${index})"><i class="bi bi-trash"></i></button></td>
+                </tr>
+            `;
+        });
+    }
+
+    // 5. CRUD 操作
+    function addETF() {
+        const code = document.getElementById('newCode').value;
+        const name = document.getElementById('newName').value;
+        const shares = parseFloat(document.getElementById('newShares').value);
+        const yld = parseFloat(document.getElementById('newYield').value);
+
+        if (code && name && !isNaN(shares) && !isNaN(yld)) {
+            portfolio.push({ id: code, name: name, shares: shares, yield: yld });
+            saveData();
+            // 清空輸入框
+            document.getElementById('newCode').value = '';
+            document.getElementById('newName').value = '';
+            document.getElementById('newShares').value = '';
+            document.getElementById('newYield').value = '';
+        } else {
+            alert("請填寫完整資訊！");
+        }
+    }
+
+    function updateItem(index, field, value) {
+        portfolio[index][field] = parseFloat(value);
+        saveData();
+    }
+
+    function deleteItem(index) {
+        if(confirm("確定刪除此 ETF？")) {
+            portfolio.splice(index, 1);
+            saveData();
+        }
+    }
+
+    // 6. 核心計算與繪圖
+    function renderDashboard() {
+        const index = document.getElementById('etfSelector').value || 0;
+        if (portfolio.length === 0) return;
+        
+        const target = portfolio[index];
+        const startShares = target.shares;
+        const rate = target.yield / 100;
+
+        // UI 標題更新
+        document.getElementById('dashboardTitle').innerHTML = `<span class="badge bg-primary">${target.id}</span> ${target.name} 存股分析`;
+        document.getElementById('currentSharesDisplay').innerText = startShares.toFixed(2) + " 張";
+        document.getElementById('yieldDisplay').innerText = target.yield + "%";
+
+        // 計算複利 (1~10年)
+        let labels = [];
+        let dataShares = [];
+        let dataDividends = []; // 每年增加的
+        let projectionHTML = '';
+
+        let current = startShares;
+        
+        // 我們需要特別標註的年份
+        const targetYears = [1, 2, 3, 4, 5, 10];
+
+        for (let year = 1; year <= 10; year++) {
+            let prev = current;
+            // 複利公式: 本利和 = 本金 * (1 + 利率)
+            // 這裡假設股息全數買入相同標的
+            current = current * (1 + rate);
+            
+            let diff = current - prev;
+            
+            labels.push(`第 ${year} 年`);
+            dataShares.push(current.toFixed(2));
+            
+            // 表格只顯示特定年份，或全部顯示但標記重點
+            const isMilestone = targetYears.includes(year);
+            const rowClass = isMilestone ? "table-primary fw-bold" : "";
+            
+            projectionHTML += `
+                <tr class="${rowClass}">
+                    <td>${year} 年後</td>
+                    <td>${current.toFixed(2)} 張</td>
+                    <td class="text-success">+${diff.toFixed(2)} 張</td>
+                    <td>${((current / startShares) * 100).toFixed(0)}%</td>
+                </tr>
+            `;
+        }
+
+        document.getElementById('projectionTable').innerHTML = projectionHTML;
+        document.getElementById('futureSharesDisplay').innerText = dataShares[9] + " 張"; // 第10年
+        
+        const totalGrowth = ((dataShares[9] - startShares) / startShares * 100).toFixed(1);
+        document.getElementById('growthRateDisplay').innerHTML = `<span class="growth-badge">+${totalGrowth}%</span>`;
+
+        // 繪製圖表
+        const ctx = document.getElementById('compoundChart').getContext('2d');
+        if (chartInstance) {
+            chartInstance.destroy();
+        }
+
+        chartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: '累積張數 (Total Shares)',
+                    data: dataShares,
+                    backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1,
+                    yAxisID: 'y',
+                }, {
+                    type: 'line',
+                    label: '成長趨勢',
+                    data: dataShares,
+                    borderColor: '#ffc107',
+                    borderWidth: 3,
+                    tension: 0.4,
+                    pointBackgroundColor: '#fff',
+                    pointRadius: 5
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                scales: {
+                    y: {
+                        beginAtZero: false, // 讓成長看起來更明顯
+                        title: { display: true, text: '張數' }
+                    }
+                },
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return context.dataset.label + ': ' + context.raw + ' 張';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+</script>
+
+</body>
+</html>
