@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ETF 存股複利戰情室 (Pro 版)</title>
+    <title>ETF 存股戰情室 (雲端同步版)</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -39,7 +39,7 @@
                             <input type="number" class="form-control form-control-sm" id="inputShares" placeholder="張數" step="0.1">
                         </div>
                         <div class="col-6">
-                            <input type="number" class="form-control form-control-sm" id="inputCost" placeholder="成本(選填)">
+                            <input type="number" class="form-control form-control-sm" id="inputCost" placeholder="成本">
                         </div>
                     </div>
                     <button class="btn btn-primary btn-sm w-100" id="btnSave" onclick="saveToGoogleSheet()">
@@ -49,10 +49,15 @@
             </div>
 
             <div class="alert alert-light border mb-3 p-2">
-                <small class="text-muted d-block mb-2">更新市場數據 (殖利率)</small>
-                <button class="btn btn-success btn-sm w-100" onclick="syncGoogleSheetData()">
-                    <i class="bi bi-cloud-download"></i> 同步 Google Sheet
-                </button>
+                <small class="text-muted d-block mb-2">雲端數據狀態</small>
+                <div class="d-grid gap-1">
+                     <button class="btn btn-outline-primary btn-sm" onclick="syncPortfolioFromCloud()">
+                        <i class="bi bi-arrow-repeat"></i> 下載我的庫存
+                    </button>
+                    <button class="btn btn-outline-success btn-sm" onclick="syncGoogleSheetData()">
+                        <i class="bi bi-graph-up"></i> 更新市場殖利率
+                    </button>
+                </div>
                 <div id="syncStatus" class="small text-muted mt-1 text-center" style="font-size: 0.8em;"></div>
             </div>
 
@@ -64,7 +69,7 @@
             
             <div class="d-grid gap-2">
                 <button class="btn btn-outline-danger btn-sm" onclick="resetData()">
-                    <i class="bi bi-arrow-counterclockwise"></i> 重置本機快取
+                    <i class="bi bi-trash"></i> 重置所有資料
                 </button>
             </div>
         </div>
@@ -72,7 +77,7 @@
         <div class="col-md-9 col-lg-10 p-4">
             <div class="d-md-none mb-3">
                 <button class="btn btn-primary w-100 mb-2" data-bs-toggle="modal" data-bs-target="#mobileSaveModal">
-                    <i class="bi bi-cloud-upload"></i> 新增持股
+                    <i class="bi bi-cloud-upload"></i> 新增/管理
                 </button>
                 <select class="form-select mb-2" id="etfSelectorMobile" onchange="syncMobileSelect(this.value)">
                 </select>
@@ -155,6 +160,7 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-primary w-100" onclick="saveToGoogleSheet();">確認儲存</button>
+                <button type="button" class="btn btn-outline-primary w-100 mt-2" onclick="syncPortfolioFromCloud();" data-bs-dismiss="modal">下載我的庫存</button>
             </div>
         </div>
     </div>
@@ -165,17 +171,14 @@
     // 🔧 設定區 (Config)
     // ============================================================
     
-    // 1. Google Apps Script (負責存檔)
+    // 1. Google Apps Script
     const GAS_API_URL = "https://script.google.com/macros/s/AKfycbwa5A867o-bWRfzoMNuufTGYE-vdkmNlYs_mE6TwshaAgD-aZQQOQuQ8DKDrVCIUyVp/exec";
 
-    // 2. Google Sheet CSV (負責讀取殖利率) - 已使用您提供的 MarketData 分頁連結
+    // 2. Google Sheet CSV
     const GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vR4QoHaM5u03EpqWIbYkJaj749HPEzD3VwQQMvxDzjcOKYU-NWFiZymKwLpBWhLcGQdhZtqMigya-sN/pub?gid=1762648152&single=true&output=csv'; 
 
-    // 預設資料
-    const defaultPortfolio = [
-        { id: '00878', name: '國泰永續高股息', shares: 10, yield: 6.5, cost: 22.5, source: 'default' },
-        { id: '0056',  name: '元大高股息',    shares: 5,  yield: 7.2, cost: 37.8, source: 'default' }
-    ];
+    // 預設空資料
+    const defaultPortfolio = [];
 
     let portfolio = [];
     let chartInstance = null;
@@ -185,12 +188,59 @@
     // ============================================================
 
     window.onload = function() {
-        loadData();
-        initMarketList();
-        renderDashboard();
+        loadData();             // 1. 嘗試讀取快取 (可能是空的)
+        initMarketList();       // 2. 載入搜尋清單
+        syncPortfolioFromCloud(); // 3. [新增關鍵步驟] 主動去雲端抓資料！
+        // syncGoogleSheetData(); // 4. (可選) 同步完庫存後，再自動更新殖利率，這裡先不自動跑避免卡住
     };
 
     // --- A. 雲端存取 (GAS) ---
+    
+    // 新增：從雲端拉取庫存
+    async function syncPortfolioFromCloud() {
+        const statusDiv = document.getElementById('syncStatus');
+        statusDiv.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 下載庫存中...';
+        
+        try {
+            // 呼叫 GAS 的 doGet(action=getPortfolio)
+            const res = await fetch(GAS_API_URL + "?action=getPortfolio");
+            const data = await res.json();
+            
+            if (Array.isArray(data) && data.length > 0) {
+                console.log("成功從雲端下載庫存:", data);
+                
+                // 格式轉換與合併
+                // 我們需要保留本地的 yield (如果有的話)，或者預設為 5%
+                // 雲端資料結構: {id, name, shares, cost}
+                
+                // 清空並重新填入
+                portfolio = data.map(item => ({
+                    id: item.id,
+                    name: item.name,
+                    shares: Number(item.shares),
+                    cost: Number(item.cost),
+                    yield: 5.0, // 預設值，稍後由 CSV 更新修正
+                    source: 'cloud'
+                }));
+
+                saveData(); // 更新本地快取
+                statusDiv.innerHTML = `<i class="bi bi-cloud-check text-success"></i> 已下載 ${data.length} 筆庫存`;
+                
+                // 下載完庫存後，順便去更新一下殖利率
+                syncGoogleSheetData();
+                
+            } else {
+                statusDiv.innerHTML = `<span class="text-muted">雲端無資料</span>`;
+                if(portfolio.length === 0) {
+                    document.getElementById('dashboardTitle').innerText = "尚無持股資料，請先新增";
+                }
+            }
+        } catch (e) {
+            console.error("下載庫存失敗", e);
+            statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle text-warning"></i> 下載失敗`;
+        }
+    }
+
     async function initMarketList() {
         try {
             const res = await fetch(GAS_API_URL + "?action=getMarketList");
@@ -231,8 +281,11 @@
         try {
             const payload = { id, name, shares, cost };
             await fetch(GAS_API_URL, { method: 'POST', body: JSON.stringify(payload) });
+            
+            // 更新本地
             updateLocalPortfolio(id, name, shares, cost);
             alert(`✅ ${id} 已儲存至雲端！`);
+            
             document.getElementById('inputCode').value = '';
             document.getElementById('inputShares').value = '';
             document.getElementById('inputCost').value = '';
@@ -263,10 +316,12 @@
     // --- B. CSV 同步 (Market Data) ---
     async function syncGoogleSheetData() {
         const statusDiv = document.getElementById('syncStatus');
-        statusDiv.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 同步中...';
+        // 避免覆蓋掉下載庫存的訊息，只在還沒下載時顯示
+        if(!statusDiv.innerHTML.includes("已下載")) {
+            statusDiv.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 更新殖利率...';
+        }
         
         try {
-            // 加上時間戳記防止快取
             const response = await fetch(GOOGLE_SHEET_CSV_URL + '&t=' + Date.now());
             if (!response.ok) throw new Error("連線失敗");
             
@@ -274,34 +329,20 @@
             const rows = csvText.split('\n');
             let updateCount = 0;
 
-            console.log("CSV 標題列:", rows[0]); // Debug 用，可在 F12 看
-
             for (let i = 1; i < rows.length; i++) {
                 const cols = rows[i].split(',');
-                if (cols.length < 4) continue; // 至少要有代碼, 名稱, ..., 殖利率
+                if (cols.length < 4) continue;
 
                 const sheetId = cols[0].trim();
-                
-                // === 🛡️ 智慧欄位偵測與防呆 ===
-                // 1. 先嘗試讀取第 5 欄 (Index 4)
+                // 智慧欄位偵測 (防 2025 年份問題)
                 let rawYield = parseFloat(cols[4]); 
-                
-                // 2. 如果第 5 欄是 NaN 或是大於 100 (可能是日期或空白)，嘗試讀取第 4 欄 (Index 3)
                 if (isNaN(rawYield) || rawYield > 100) {
-                    // 備案：讀取 Column D
                     let altYield = parseFloat(cols[3]);
-                    if (!isNaN(altYield) && altYield < 100) {
-                        rawYield = altYield;
-                    }
+                    if (!isNaN(altYield) && altYield < 100) rawYield = altYield;
                 }
-
                 const sheetYield = rawYield;
 
-                // 3. 最終過濾：如果還是大於 100 (年份) 或不是數字，則跳過，避免顯示 2025%
-                if (isNaN(sheetYield) || sheetYield > 100 || sheetYield <= 0) {
-                    // console.warn(`跳過異常數據 ${sheetId}: ${sheetYield}`);
-                    continue; 
-                }
+                if (isNaN(sheetYield) || sheetYield > 100 || sheetYield <= 0) continue; 
 
                 const target = portfolio.find(p => p.id == sheetId);
                 if (target) {
@@ -312,21 +353,30 @@
             }
 
             saveData();
-            statusDiv.innerHTML = `<i class="bi bi-check-circle-fill text-success"></i> 更新 ${updateCount} 筆數據`;
+            // 如果有更新，顯示狀態
+            if(updateCount > 0) {
+                statusDiv.innerHTML += ` <span class="text-success"> | 殖利率已更新</span>`;
+            }
             renderDashboard();
 
         } catch (error) {
             console.error(error);
-            statusDiv.innerHTML = `<i class="bi bi-x-circle-fill text-danger"></i> ${error.message || "同步失敗"}`;
-            alert("同步錯誤：請檢查 CSV 連結是否正確指向 MarketData 分頁。");
         }
     }
 
     // --- C. 基礎功能 ---
     function loadData() {
         const stored = localStorage.getItem('myETFPortfolio');
-        portfolio = stored ? JSON.parse(stored) : JSON.parse(JSON.stringify(defaultPortfolio));
+        // 如果沒有資料，就給空陣列，不要給預設值了，以免混淆
+        portfolio = stored ? JSON.parse(stored) : [];
+        
+        // 初始渲染，若為空則顯示提示
         updateSelectors();
+        if(portfolio.length === 0) {
+            document.getElementById('dashboardTitle').innerText = "載入中...";
+        } else {
+            renderDashboard();
+        }
     }
 
     function saveData() {
@@ -336,10 +386,11 @@
     }
 
     function resetData() {
-        if(confirm("確定重置？")) {
+        if(confirm("確定重置？(這只會清空本機快取，雲端資料還在)")) {
             localStorage.removeItem('myETFPortfolio');
             loadData();
-            renderDashboard();
+            document.getElementById('dashboardTitle').innerText = "已重置，請重新下載庫存";
+            renderDashboard(); // clear view
         }
     }
 
@@ -363,7 +414,19 @@
     // --- D. 渲染畫面 ---
     function renderDashboard() {
         const index = document.getElementById('etfSelector').value || 0;
-        if (portfolio.length === 0) return;
+        
+        // 處理空資料狀況
+        if (portfolio.length === 0) {
+            document.getElementById('dashboardTitle').innerText = "尚無資料 (請按「下載我的庫存」)";
+            document.getElementById('currentSharesDisplay').innerText = "-";
+            document.getElementById('yieldDisplay').innerText = "-";
+            document.getElementById('costDisplay').innerText = "-";
+            document.getElementById('futureSharesDisplay').innerText = "-";
+            document.getElementById('growthRateDisplay').innerText = "";
+            document.getElementById('projectionTable').innerHTML = "";
+            if(chartInstance) chartInstance.destroy();
+            return;
+        }
         
         const target = portfolio[index];
         const startShares = target.shares;
@@ -376,7 +439,7 @@
         document.getElementById('costDisplay').innerText = cost > 0 ? `$${cost}` : "未輸入";
         
         const srcTag = document.getElementById('dataSourceTag');
-        srcTag.innerHTML = target.source === 'GoogleSheet' ? '<span class="badge bg-success">自動更新</span>' : '<span class="badge bg-secondary">手動</span>';
+        srcTag.innerHTML = target.source === 'GoogleSheet' ? '<span class="badge bg-success">自動更新</span>' : '<span class="badge bg-secondary">手動/雲端</span>';
 
         let labels = [];
         let dataShares = [];
