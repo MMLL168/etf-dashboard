@@ -168,8 +168,8 @@
     // 1. 您的 Google Apps Script 網頁應用程式網址 (負責存檔與讀取清單)
     const GAS_API_URL = "https://script.google.com/macros/s/AKfycbwa5A867o-bWRfzoMNuufTGYE-vdkmNlYs_mE6TwshaAgD-aZQQOQuQ8DKDrVCIUyVp/exec";
 
-    // 2. 您的 Google Sheet CSV 發布連結 (負責同步殖利率市場數據)
-    const GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vR4QoHaM5u03EpqWIbYkJaj749HPEzD3VwQQMvxDzjcOKYU-NWFiZymKwLpBWhLcGQdhZtqMigya-sN/pub?output=csv'; 
+    // 2. 您的 Google Sheet CSV 發布連結 (已更新為正確的 MarketData 分頁連結)
+    const GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vR4QoHaM5u03EpqWIbYkJaj749HPEzD3VwQQMvxDzjcOKYU-NWFiZymKwLpBWhLcGQdhZtqMigya-sN/pub?gid=1762648152&single=true&output=csv'; 
 
     // 預設資料 (當還沒有同步時顯示)
     const defaultPortfolio = [
@@ -308,8 +308,16 @@
                 const sheetId = cols[0].trim();
                 const sheetYield = parseFloat(cols[4]); 
 
+                // === 🛡️ 新增防呆機制 (Sanity Check) ===
+                // 1. 檢查是否為 NaN
+                // 2. 檢查殖利率是否合理 (例如：不應該超過 100%，也不應該剛好等於 2024/2025 這種年份數字)
+                if (isNaN(sheetYield) || sheetYield > 100) {
+                    console.warn(`跳過異常數據: ${sheetId} 殖利率 ${sheetYield}% (可能是讀到日期了)`);
+                    continue; 
+                }
+
                 const target = portfolio.find(p => p.id == sheetId);
-                if (target && !isNaN(sheetYield)) {
+                if (target) {
                     target.yield = sheetYield;
                     target.source = 'GoogleSheet';
                     updateCount++;
